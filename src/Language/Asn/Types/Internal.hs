@@ -14,21 +14,30 @@
 module Language.Asn.Types.Internal where
 
 import Prelude hiding (sequence,null)
-import Data.String (IsString)
+
+import Data.Aeson (ToJSON,FromJSON,FromJSONKey)
 import Data.ByteString (ByteString)
+import Data.Functor.Contravariant (Contravariant(..))
+import Data.Hashable (Hashable(..))
+import Data.Primitive (PrimArray)
+import Data.Semigroup (Semigroup)
+import Data.String (IsString)
 import Data.Text (Text)
+import Data.Word (Word64,Word8)
+import GHC.Generics (Generic)
+import GHC.Int (Int(..))
+
+import qualified Data.Aeson as AE
+import qualified Data.Aeson.Types as AE
+import qualified Data.ByteString.Lazy as LB
+import qualified Data.List as L
+import qualified Data.Text as T
+import qualified Data.Text.Read as TR
+import qualified GHC.Exts as E
+
 #if !MIN_VERSION_base(4,11,0)
 import Data.Monoid (Monoid)
 #endif
-import Data.Semigroup (Semigroup)
-import Data.Word
-import Data.Primitive (PrimArray)
-import GHC.Int (Int(..))
-import Data.Hashable (Hashable(..))
-import GHC.Generics (Generic)
-import Data.Functor.Contravariant (Contravariant(..))
-import qualified Data.ByteString.Lazy as LB
-import qualified GHC.Exts as E
 
 data AsnEncoding a
   = EncSequence [Field a]
@@ -74,6 +83,30 @@ newtype Subtypes a = Subtypes { getSubtypes :: [Subtype a] }
 newtype ObjectIdentifier = ObjectIdentifier
   { getObjectIdentifier :: PrimArray Word
   } deriving (Eq,Ord,Show,Generic)
+
+instance ToJSON ObjectIdentifier where
+  toJSON (ObjectIdentifier xs) = AE.toJSON
+    $ mconcat
+    $ L.intersperse (T.singleton '.')
+    $ map (T.pack . show)
+    $ E.toList xs
+
+instance FromJSONKey ObjectIdentifier where
+  fromJSONKey = AE.FromJSONKeyTextParser oidJsonParser
+
+instance FromJSON ObjectIdentifier where
+  parseJSON = AE.withText "ObjectIdentifier" oidJsonParser
+
+oidJsonParser :: Text -> AE.Parser ObjectIdentifier
+oidJsonParser t =
+  case fmap (ObjectIdentifier . E.fromList) (mapM parseWord (T.splitOn (T.singleton '.') t)) of
+    Nothing -> fail ("could not recognize " ++ T.unpack t ++ " as an OID")
+    Just x -> return x
+
+parseWord :: Text -> Maybe Word
+parseWord t = case TR.decimal t of
+  Right (i,leftovers) -> if T.null leftovers then Just i else Nothing
+  Left _ -> Nothing
 
 instance Hashable ObjectIdentifier where
   hash (ObjectIdentifier v) = hash (E.toList v)
